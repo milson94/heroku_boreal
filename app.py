@@ -1,53 +1,72 @@
 from flask import Flask, request, jsonify
 import os
-import logging
+import requests
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.DEBUG)  # Enable logging for debugging
 
+# Environment variables for WhatsApp API
+VERIFY_TOKEN = os.getenv('VERIFY_TOKEN', 'your_verify_token')  # Webhook verification token
+ACCESS_TOKEN = os.getenv('ACCESS_TOKEN')  # WhatsApp API access token
+PHONE_NUMBER_ID = os.getenv('PHONE_NUMBER_ID')  # WhatsApp Business phone number ID
 
+# Root endpoint
+@app.route('/')
+def home():
+    return "Welcome to the WhatsApp Chatbot!"
+
+# Webhook endpoint for WhatsApp
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
         # Verify the webhook
-        verify_token = os.getenv('VERIFY_TOKEN') # Removed the default value here
-        if not verify_token:
-            logging.error("VERIFY_TOKEN environment variable not set!")
-            return "Verification failed: missing verification token", 500
-
-        if request.args.get('hub.verify_token') == verify_token:
-            challenge = request.args.get('hub.challenge')
-            if challenge:
-               return challenge, 200 # Verification success: Respond with the challenge
-            else:
-               logging.error("Verification failed: No challenge provided")
-               return "Verification failed: missing challenge", 400 
-
-        logging.error("Verification failed: Token mismatch")
-        return "Verification failed: token mismatch", 403
+        hub_verify_token = request.args.get('hub.verify_token')
+        if hub_verify_token == VERIFY_TOKEN:
+            return request.args.get('hub.challenge')  # Return challenge for verification
+        return "Verification failed: Invalid token", 403
 
     elif request.method == 'POST':
         # Handle incoming messages
+        data = request.json
+        print("Incoming data:", data)  # Log incoming data for debugging
+
         try:
-            data = request.get_json() # Use get_json to handle json parsing errors
-            logging.info("Received data: %s", data)  # Log the incoming data with logging
+            # Extract message and sender ID from the incoming payload
+            message = data['entry'][0]['changes'][0]['value']['messages'][0]['text']['body']
+            sender_id = data['entry'][0]['changes'][0]['value']['messages'][0]['from']
 
-             #Process WhatsApp message here
-           # Example:
-           #  if data and 'entry' in data and data['entry']:
-           #      for entry in data['entry']:
-           #           if 'changes' in entry and entry['changes']:
-           #              for change in entry['changes']:
-           #                  if 'value' in change and 'messages' in change['value'] and change['value']['messages']:
-           #                       for message in change['value']['messages']:
-           #                            logging.info("Message Recieved : %s", message)
+            # Log the received message and sender ID
+            print(f"Received message from {sender_id}: {message}")
 
+            # Send a reply back to the user
+            send_message(sender_id, f"You said: {message}")
             return "OK", 200
 
-        except Exception as e:
-             logging.error("Error processing POST data: %s", str(e))
-             return jsonify({'error': 'Invalid JSON'}), 400
+        except KeyError as e:
+            print(f"Error processing incoming message: {e}")
+            return "Invalid message format", 400
 
+# Function to send a message via WhatsApp API
+def send_message(recipient_id, message):
+    url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_id,
+        "text": {"body": message}
+    }
+
+    # Send the message using the WhatsApp API
+    response = requests.post(url, json=payload, headers=headers)
+    if response.status_code == 200:
+        print(f"Message sent to {recipient_id}: {message}")
+    else:
+        print(f"Failed to send message. Status code: {response.status_code}, Response: {response.json()}")
+
+# Run the Flask app
 if __name__ == '__main__':
+    # Use the port provided by the environment or default to 5000 for local testing
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
